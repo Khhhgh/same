@@ -3,14 +3,13 @@ import asyncio
 import glob
 import uuid
 import json
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberUpdated
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.request import HTTPXRequest
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    ChatMemberHandler,
     ContextTypes,
     filters,
 )
@@ -20,7 +19,7 @@ from telegram.ext import (
 # =========================================================
 
 BOT_TOKEN = "5183479640:AAE7L00aDWtZrJgGcbDR8EdgIbdX8KhtcpM"
-ADMIN_ID = 1310488710  # ضع معرف الأدمن الرئيسي هنا (يُفضل وضعه لتفعيل صلاحيات الإدارة)
+ADMIN_ID = 1310488710
 
 USERS_FILE = "users.json"
 SETTINGS_FILE = "settings.json"
@@ -31,7 +30,6 @@ CONCURRENT_FRAGMENTS = 16
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# إدارة قاعدة البيانات البسيطة
 def load_json(filename, default):
     if os.path.exists(filename):
         try:
@@ -45,11 +43,10 @@ def save_json(filename, data):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# تحميل البيانات عند بدء التشغيل
 users_data = load_json(USERS_FILE, {"users": [], "banned": []})
 settings_data = load_json(SETTINGS_FILE, {
     "welcome_message": "أهلاً بك في بوت التحميل السريع! 🚀\nأرسل رابط فيديو من (تيك توك، يوتيوب، بينترست) للتحميل.",
-    "channels": []  # قائمة قنوات الاشتراك الإجباري [{"id": "@channel", "url": "https://t.me/..."}]
+    "channels": []
 })
 
 def add_user(user_id):
@@ -57,20 +54,17 @@ def add_user(user_id):
         users_data["users"].append(user_id)
         save_json(USERS_FILE, users_data)
 
-# =========================================================
-# SEMAPHORES
-# =========================================================
 download_semaphore = asyncio.Semaphore(MAX_DOWNLOADS)
 send_semaphore = asyncio.Semaphore(MAX_SENDS)
 
 
 # =========================================================
-# SUBSCRIPTION CHECK (الاشتراك الإجباري)
+# SUBSCRIPTION CHECK
 # =========================================================
 async def check_subscription(user_id, context: ContextTypes.DEFAULT_TYPE):
     channels = settings_data.get("channels", [])
     if not channels:
-        return True
+        return []
     
     not_subscribed = []
     for ch in channels:
@@ -80,7 +74,6 @@ async def check_subscription(user_id, context: ContextTypes.DEFAULT_TYPE):
             if member.status in ["left", "kicked"]:
                 not_subscribed.append(ch)
         except Exception:
-            # إذا فشل الفحص (البوت ليس مشرفاً مثلاً)، نتخطاه مؤقتاً أو نعتبره غير مشترك حسب الرغبة
             pass
     return not_subscribed
 
@@ -95,7 +88,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     add_user(user_id)
 
-    # التحقق من الاشتراك الإجباري
     not_sub = await check_subscription(user_id, context)
     if not_sub:
         keyboard = []
@@ -111,7 +103,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     welcome_text = settings_data.get("welcome_message", "أهلاً بك في البوت!")
     
-    # لوحة تحكم سريعة للأدمن إذا كان هو المرسل
     reply_markup = None
     if user_id == ADMIN_ID:
         reply_markup = InlineKeyboardMarkup([
@@ -128,7 +119,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-
     data = query.data
 
     if data == "check_sub":
@@ -201,9 +191,9 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# ADMIN TEXT HANDLERS & BROADCAST
+# ADMIN TEXT HANDLERS
 # =========================================================
-async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_admin_steps(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
         return False
@@ -250,7 +240,7 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 # =========================================================
-# UNIQUE JOB DIRECTORY
+# JOB DIRECTORY & DOWNLOAD
 # =========================================================
 def create_job_directory(user_id: int):
     job_id = str(user_id) + "_" + uuid.uuid4().hex
@@ -258,22 +248,14 @@ def create_job_directory(user_id: int):
     os.makedirs(job_dir, exist_ok=True)
     return job_dir
 
-
-# =========================================================
-# DOWNLOAD WITH YT-DLP (YouTube, Pinterest, TikTok, etc.)
-# =========================================================
 async def download_video(url: str, job_dir: str):
     output = os.path.join(job_dir, "%(id)s.%(ext)s")
     attempt = 0
 
     while True:
         attempt += 1
-        print("==========================================")
-        print("DOWNLOAD START | Attempt:", attempt, "| URL:", url)
-        print("==========================================")
-
         command = [
-            "python3",
+            "python",
             "-m",
             "yt_dlp",
             "--no-playlist",
@@ -305,41 +287,17 @@ async def download_video(url: str, job_dir: str):
 
             if process.returncode == 0 and valid_files:
                 valid_files.sort(key=os.path.getsize, reverse=True)
-                filename = valid_files[0]
-                print("DOWNLOAD SUCCESS:", filename)
-                return filename
-
-            error = stderr.decode("utf-8", errors="ignore")
-            if not error:
-                error = stdout.decode("utf-8", errors="ignore")
-            print("YT-DLP ERROR:", error[-2000:])
+                return valid_files[0]
 
         except Exception as e:
             print("YT-DLP EXCEPTION:", repr(e))
 
-        try:
-            for file in glob.glob(os.path.join(job_dir, "*")):
-                if os.path.isfile(file):
-                    try:
-                        os.remove(file)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
         if attempt >= 3:
             return None
-
-        print("Retrying in 2 seconds...")
         await asyncio.sleep(2)
 
-
-# =========================================================
-# SEND VIDEO
-# =========================================================
 async def send_video(update: Update, filename: str):
     async with send_semaphore:
-        print("SEND START:", filename)
         with open(filename, "rb") as video:
             await update.message.reply_video(
                 video=video,
@@ -348,12 +306,7 @@ async def send_video(update: Update, filename: str):
                 write_timeout=180,
                 connect_timeout=30
             )
-        print("SEND COMPLETE:", filename)
 
-
-# =========================================================
-# PROCESS ONE JOB
-# =========================================================
 async def process_job(update: Update, status, url: str):
     job_dir = create_job_directory(update.effective_user.id)
     filename = None
@@ -371,14 +324,12 @@ async def process_job(update: Update, status, url: str):
             pass
 
         await send_video(update, filename)
-
         try:
             await status.delete()
         except Exception:
             pass
 
     except Exception as e:
-        print("JOB ERROR:", repr(e))
         try:
             await status.edit_text("فشل التحميل:\n" + str(e)[:1500])
         except Exception:
@@ -400,19 +351,18 @@ async def process_job(update: Update, status, url: str):
 
 
 # =========================================================
-# RECEIVE URL
+# MESSAGE HANDLER
 # =========================================================
 async def download_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    # التحقق من كون الرسالة تخص أوامر لوحة التحكم للأدمن
-    if await admin_text_handler(update, context):
+    # معالجة خطوات الأدمن أولاً
+    if await handle_admin_steps(update, context):
         return
 
     user_id = update.effective_user.id
     
-    # فحص الاشتراك الإجباري قبل التحميل
     not_sub = await check_subscription(user_id, context)
     if not_sub:
         keyboard = []
@@ -434,48 +384,10 @@ async def download_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         status = await update.message.reply_text("جاري معالجة الرابط وتحميل الفيديو...")
     except Exception as e:
-        print("STATUS ERROR:", repr(e))
         return
 
     asyncio.create_task(process_job(update, status, url))
 
-
-# =========================================================
-# MEMBER JOIN/LEAVE NOTIFIER (إشعار دخول وخروج عضو)
-# =========================================================
-async def track_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    result = update.chat_member
-    if not result:
-        return
-
-    user = result.new_chat_member.user
-    status = result.new_chat_member.status
-
-    # إذا قام العضو بحظر البوت أو دخوله
-    if status == "member":
-        add_user(user.id)
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"👤 **عضو جديد استخدم البوت:**\nالاسم: {user.full_name}\nالمعرف: @{user.username or 'لا يوجد'}\nالآيدي: `{user.id}`",
-                parse_mode="Markdown"
-            )
-        except:
-            pass
-    elif status in ["kicked", "left"]:
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"🚫 **قام مستخدم بحظر البوت أو ترك القناة:**\nالاسم: {user.full_name}\nالآيدي: `{user.id}`",
-                parse_mode="Markdown"
-            )
-        except:
-            pass
-
-
-# =========================================================
-# ERROR HANDLER
-# =========================================================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     print("TELEGRAM ERROR:", repr(context.error))
 
@@ -484,25 +396,8 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # MAIN
 # =========================================================
 def main():
-    if BOT_TOKEN == "ضع_التوكن_الجديد_هنا":
-        print("ضع توكن البوت الجديد داخل BOT_TOKEN")
-        return
-
-    request = HTTPXRequest(
-        connect_timeout=20,
-        read_timeout=180,
-        write_timeout=180,
-        pool_timeout=180
-    )
-
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .request(request)
-        .get_updates_request(request)
-        .concurrent_updates(100)
-        .build()
-    )
+    request = HTTPXRequest(connect_timeout=20, read_timeout=180, write_timeout=180, pool_timeout=180)
+    app = Application.builder().token(BOT_TOKEN).request(request).get_updates_request(request).concurrent_updates(100).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(admin_callback))
@@ -510,11 +405,10 @@ def main():
     app.add_error_handler(error_handler)
 
     print("==========================================")
-    print("BOT STARTED WITH FULL FEATURES (YT, PIN, ADMIN)")
+    print("BOT STARTED CLEAN & READY")
     print("==========================================")
 
     app.run_polling(drop_pending_updates=True, bootstrap_retries=5)
 
 if __name__ == "__main__":
     main()
-
