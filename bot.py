@@ -46,7 +46,7 @@ def save_json(filename, data):
 
 users_data = load_json(USERS_FILE, {"users": [], "banned": []})
 settings_data = load_json(SETTINGS_FILE, {
-    "welcome_message": "أهلاً بك في بوت التحميل الشامل والموسيقى! 🚀\nأرسل رابط (يوتيوب، انستغرام، تيك توك، بينترست) أو أرسل مقطع صوتي لمعرفة الأغنية.",
+    "welcome_message": "أهلاً بك في البوت المُحدث بنجاح! 🚀\nأرسل رابط (يوتيوب، انستغرام، تيك توك، بينترست) أو أرسل مقطع صوتي لمعرفة الأغنية.",
     "channels": []
 })
 
@@ -182,7 +182,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "adm_close":
         await query.message.delete()
 
-    # معالجة اختيارات يوتيوب (فيديو أو صوت)
     elif data.startswith("dl_"):
         parts = data.split("_")
         mode = parts[1] # video or audio
@@ -235,7 +234,7 @@ async def handle_admin_steps(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 # =========================================================
-# DOWNLOAD CORE (YT-DLP)
+# DOWNLOAD CORE (YT-DLP) WITH TIKTOK & YOUTUBE FIX
 # =========================================================
 def create_job_directory(user_id: int):
     job_id = str(user_id) + "_" + uuid.uuid4().hex
@@ -246,25 +245,26 @@ def create_job_directory(user_id: int):
 async def download_media(url: str, job_dir: str, mode: str = "video"):
     output = os.path.join(job_dir, "%(id)s.%(ext)s")
     
+    base_command = [
+        "python", "-m", "yt_dlp",
+        "--no-playlist",
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "-o", output,
+        "--no-check-certificates", "--geo-bypass", "--no-warnings"
+    ]
+    
+    if "youtube.com" in url or "youtu.be" in url:
+        base_command.extend(["--extractor-args", "youtube:player_client=android"])
+    
     if mode == "audio":
-        command = [
-            "python", "-m", "yt_dlp",
-            "--no-playlist",
+        command = base_command + [
             "-x", "--audio-format", "mp3", "--audio-quality", "0",
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "-o", output,
-            "--no-check-certificates", "--geo-bypass", "--no-warnings",
             url
         ]
     else:
-        command = [
-            "python", "-m", "yt_dlp",
-            "--no-playlist",
-            "-f", "bestvideo+bestaudio/best",
+        command = base_command + [
+            "-f", "best/bestvideo+bestaudio",
             "--merge-output-format", "mp4",
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "-o", output,
-            "--no-check-certificates", "--geo-bypass", "--no-warnings",
             url
         ]
 
@@ -381,7 +381,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("عذراً، اشترك في القنوات أولاً.", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # التعامل مع الروابط
     if update.message.text and update.message.text.strip().startswith(("http://", "https://")):
         url = update.message.text.strip()
         
@@ -400,7 +399,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(process_download_task(status, url, "video"))
         return
 
-    # التعامل مع الملفات الصوتية والفيديوهات (للتعرف على الأغاني)
     audio_file = update.message.audio or update.message.voice or update.message.video or update.message.document
     if audio_file:
         status = await update.message.reply_text("🎧 جاري الاستماع للتعرف على الأغنية...")
@@ -442,7 +440,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT | filters.AUDIO | filters.VOICE | filters.VIDEO | filters.DOCUMENT, message_handler))
 
     print("==========================================")
-    print("BOT STARTED WITH YOUTUBE OPTIONS & SHAZAM")
+    print("BOT STARTED WITH UPDATED TIKTOK SUPPORT")
     print("==========================================")
 
     app.run_polling(drop_pending_updates=True, bootstrap_retries=5)
