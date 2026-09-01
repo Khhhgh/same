@@ -251,6 +251,7 @@ async def download_media(url: str, job_dir: str, mode: str = "video"):
             "python", "-m", "yt_dlp",
             "--no-playlist",
             "-x", "--audio-format", "mp3", "--audio-quality", "0",
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "-o", output,
             "--no-check-certificates", "--geo-bypass", "--no-warnings",
             url
@@ -261,6 +262,7 @@ async def download_media(url: str, job_dir: str, mode: str = "video"):
             "--no-playlist",
             "-f", "bestvideo+bestaudio/best",
             "--merge-output-format", "mp4",
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "-o", output,
             "--no-check-certificates", "--geo-bypass", "--no-warnings",
             url
@@ -270,8 +272,11 @@ async def download_media(url: str, job_dir: str, mode: str = "video"):
         process = await asyncio.create_subprocess_exec(
             *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        _, stderr = await process.communicate()
+        stdout, stderr = await process.communicate()
         
+        if process.returncode != 0:
+            print("YT-DLP ERROR:", stderr.decode("utf-8", errors="ignore"))
+
         files = glob.glob(os.path.join(job_dir, "*"))
         valid_files = [f for f in files if os.path.isfile(f) and os.path.getsize(f) > 0]
 
@@ -315,15 +320,13 @@ async def process_download_task(message, url: str, mode: str):
 
 
 # =========================================================
-# MUSIC RECOGNITION (ACRCloud / AudD Free API)
+# MUSIC RECOGNITION (AudD Free API)
 # =========================================================
 async def recognize_song(file_path: str):
-    """التعرف على الأغنية عبر إرسال عينة صوتية لواجهة برمجية مجانية"""
     try:
         with open(file_path, "rb") as f:
             audio_data = f.read()
         
-        # استخدام API مجاني للتعرف على الأغاني (AudD Test API)
         data = {
             'api_token': 'test',
             'return': 'apple_music,spotify',
@@ -371,7 +374,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
     
-    # فحص الاشتراك الإجباري
     not_sub = await check_subscription(user_id, context)
     if not_sub:
         keyboard = [[InlineKeyboardButton("اشترك في القناة 📢", url=ch["url"])] for ch in not_sub]
@@ -379,11 +381,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("عذراً، اشترك في القنوات أولاً.", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # 1. التعامل مع الروابط (يوتيوب، انستا، تيك توك، بينترست)
+    # التعامل مع الروابط
     if update.message.text and update.message.text.strip().startswith(("http://", "https://")):
         url = update.message.text.strip()
         
-        # إذا كان الرابط يوتيوب، نعرض خيارات (فيديو أو صوت)
         if "youtube.com" in url or "youtu.be" in url:
             encoded_url = urllib.parse.quote(url, safe="")
             keyboard = [
@@ -395,12 +396,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("اختر طريقة التحميل المطلوبة ليوتيوب:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
-        # باقي المنصات (تيك توك، انستغرام، بينترست) نحملها فيديو مباشرة
         status = await update.message.reply_text("⏳ جاري التحميل والمعالجة...")
         asyncio.create_task(process_download_task(status, url, "video"))
         return
 
-    # 2. التعامل مع الملفات الصوتية أو الفيديوهات المرسلة (ميزة التعرف على الأغاني)
+    # التعامل مع الملفات الصوتية والفيديوهات (للتعرف على الأغاني)
     audio_file = update.message.audio or update.message.voice or update.message.video or update.message.document
     if audio_file:
         status = await update.message.reply_text("🎧 جاري الاستماع للتعرف على الأغنية...")
