@@ -45,7 +45,7 @@ def save_json(filename, data):
 
 users_data = load_json(USERS_FILE, {"users": [], "banned": []})
 settings_data = load_json(SETTINGS_FILE, {
-    "welcome_message": "أهلاً بك في بوت التحميل السريع! 🚀\nأرسل رابط فيديو من (تيك توك، يوتيوب، بينترست) للتحميل.",
+    "welcome_message": "أهلاً بك في بوت التحميل الشامل! 🚀\nأرسل رابط من (يوتيوب، انستغرام، تيك توك، بينترست) للتحميل.",
     "channels": []
 })
 
@@ -259,13 +259,13 @@ async def download_video(url: str, job_dir: str):
             "-m",
             "yt_dlp",
             "--no-playlist",
-            "-f", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
+            "-f", "b / best",
             "-o", output,
-            "--concurrent-fragments", str(CONCURRENT_FRAGMENTS),
-            "--buffer-size", "1M",
-            "--socket-timeout", "25",
-            "--retries", "3",
-            "--fragment-retries", "3",
+            "--socket-timeout", "30",
+            "--retries", "5",
+            "--fragment-retries", "5",
+            "--no-check-certificates",
+            "--geo-bypass",
             "--quiet",
             "--no-warnings",
             url
@@ -316,7 +316,7 @@ async def process_job(update: Update, status, url: str):
             filename = await download_video(url, job_dir)
 
         if not filename or not os.path.exists(filename):
-            raise Exception("لم يتم العثور على الفيديو أو فشل التحميل.")
+            raise Exception("لم يتم العثور على الفيديو أو فشل التحميل من هذا الرابط.")
 
         try:
             await status.edit_text("تم التحميل، جاري الإرسال...")
@@ -357,7 +357,6 @@ async def download_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    # معالجة خطوات الأدمن أولاً
     if await handle_admin_steps(update, context):
         return
 
@@ -378,7 +377,7 @@ async def download_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url = update.message.text.strip()
     if not url.startswith(("http://", "https://")):
-        await update.message.reply_text("أرسل رابط صحيح (يوتيوب، تيك توك، بينترست).")
+        await update.message.reply_text("أرسل رابط صحيح (يوتيوب، انستغرام، تيك توك، بينترست).")
         return
 
     try:
@@ -405,7 +404,7 @@ def main():
     app.add_error_handler(error_handler)
 
     print("==========================================")
-    print("BOT STARTED CLEAN & READY")
+    print("BOT STARTED - ALL PLATFORMS SUPPORTED")
     print("==========================================")
 
     app.run_polling(drop_pending_updates=True, bootstrap_retries=5)
