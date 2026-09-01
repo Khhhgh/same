@@ -3,6 +3,8 @@ import asyncio
 import glob
 import uuid
 import json
+import urllib.request
+import urllib.parse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.request import HTTPXRequest
 from telegram.ext import (
@@ -26,7 +28,6 @@ SETTINGS_FILE = "settings.json"
 
 MAX_DOWNLOADS = 20
 MAX_SENDS = 20
-CONCURRENT_FRAGMENTS = 16
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
@@ -45,7 +46,7 @@ def save_json(filename, data):
 
 users_data = load_json(USERS_FILE, {"users": [], "banned": []})
 settings_data = load_json(SETTINGS_FILE, {
-    "welcome_message": "أهلاً بك في بوت التحميل الشامل! 🚀\nأرسل رابط من (يوتيوب، انستغرام، تيك توك، بينترست) للتحميل.",
+    "welcome_message": "أهلاً بك في بوت التحميل الشامل والموسيقى! 🚀\nأرسل رابط (يوتيوب، انستغرام، تيك توك، بينترست) أو أرسل مقطع صوتي لمعرفة الأغنية.",
     "channels": []
 })
 
@@ -106,7 +107,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = None
     if user_id == ADMIN_ID:
         reply_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 لوحة التحكم والأداة", callback_data="admin_panel")]
+            [InlineKeyboardButton("📊 لوحة التحكم والإدارة", callback_data="admin_panel")]
         ])
 
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
@@ -132,66 +133,67 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_panel" and user_id == ADMIN_ID:
         keyboard = [
             [InlineKeyboardButton("📊 الإحصائيات", callback_data="adm_stats"),
-             InlineKeyboardButton("📢 إرسال اذاعة", callback_data="adm_broadcast")],
-            [InlineKeyboardButton("➕ إضافة قناة اشتراك", callback_data="adm_add_ch"),
-             InlineKeyboardButton("🗑 حذف قناة اشتراك", callback_data="adm_del_ch")],
-            [InlineKeyboardButton("✏️ تغيير رسالة الترحيب", callback_data="adm_set_welcome")],
-            [InlineKeyboardButton("🔙 إغلاق اللوحة", callback_data="adm_close")]
+             InlineKeyboardButton("📢 إذاعة", callback_data="adm_broadcast")],
+            [InlineKeyboardButton("➕ إضافة قناة", callback_data="adm_add_ch"),
+             InlineKeyboardButton("🗑 حذف قناة", callback_data="adm_del_ch")],
+            [InlineKeyboardButton("✏️ تغيير الترحيب", callback_data="adm_set_welcome")],
+            [InlineKeyboardButton("🔙 إغلاق", callback_data="adm_close")]
         ]
-        await query.message.edit_text("مرحباً بك في لوحة التحكم الإدارية:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.message.edit_text("لوحة التحكم:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "adm_stats" and user_id == ADMIN_ID:
         total_users = len(users_data["users"])
         banned_users = len(users_data["banned"])
         channels_count = len(settings_data["channels"])
-        
-        stats_text = (
-            f"📊 **إحصائيات البوت:**\n\n"
-            f"👤 عدد المستخدمين: `{total_users}`\n"
-            f"🚫 المحظورين: `{banned_users}`\n"
-            f"📢 قنوات الاشتراك الإجباري: `{channels_count}`"
-        )
+        stats_text = f"📊 المستخدمين: `{total_users}`\n🚫 المحظورين: `{banned_users}`\n📢 القنوات: `{channels_count}`"
         keyboard = [[InlineKeyboardButton("رجوع", callback_data="admin_panel")]]
         await query.message.edit_text(stats_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "adm_broadcast" and user_id == ADMIN_ID:
         context.user_data["waiting_for_broadcast"] = True
-        await query.message.reply_text("أرسل الآن رسالة الإذاعة (نص، صورة، فيديو...) وسيتم إرسالها لجميع المستخدمين:")
+        await query.message.reply_text("أرسل رسالة الإذاعة الآن:")
 
     elif data == "adm_set_welcome" and user_id == ADMIN_ID:
         context.user_data["waiting_for_welcome"] = True
-        await query.message.reply_text("أرسل النص الجديد لرسالة الترحيب:")
+        await query.message.reply_text("أرسل نص الترحيب الجديد:")
 
     elif data == "adm_add_ch" and user_id == ADMIN_ID:
         context.user_data["waiting_for_add_channel"] = True
-        await query.message.reply_text("أرسل معرف القناة ورابطها بهذا الشكل (افصل بينهم بمسافة):\n`@ChannelUsername https://t.me/...`", parse_mode="Markdown")
+        await query.message.reply_text("أرسل المعرف والرابط مفصولين بمسافة:\n`@ChannelUsername https://t.me/...`", parse_mode="Markdown")
 
     elif data == "adm_del_ch" and user_id == ADMIN_ID:
         channels = settings_data["channels"]
         if not channels:
-            await query.answer("لا توجد قنوات مضافة حالياً!", show_alert=True)
+            await query.answer("لا توجد قنوات!", show_alert=True)
             return
-        keyboard = []
-        for idx, ch in enumerate(channels):
-            keyboard.append([InlineKeyboardButton(f"حذف: {ch['id']}", callback_data=f"del_ch_{idx}")])
+        keyboard = [[InlineKeyboardButton(f"حذف: {ch['id']}", callback_data=f"del_ch_{idx}")] for idx, ch in enumerate(channels)]
         keyboard.append([InlineKeyboardButton("رجوع", callback_data="admin_panel")])
-        await query.message.edit_text("اختر القناة المراد حذفها:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.message.edit_text("اختر القناة للحذف:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("del_ch_") and user_id == ADMIN_ID:
         idx = int(data.split("_")[2])
         if idx < len(settings_data["channels"]):
             removed = settings_data["channels"].pop(idx)
             save_json(SETTINGS_FILE, settings_data)
-            await query.answer(f"تم حذف القناة {removed['id']} بنجاح!", show_alert=True)
+            await query.answer(f"تم حذف {removed['id']}", show_alert=True)
         keyboard = [[InlineKeyboardButton("رجوع", callback_data="admin_panel")]]
-        await query.message.edit_text("تم الحذف بنجاح.", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.message.edit_text("تم الحذف.", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "adm_close":
         await query.message.delete()
 
+    # معالجة اختيارات يوتيوب (فيديو أو صوت)
+    elif data.startswith("dl_"):
+        parts = data.split("_")
+        mode = parts[1] # video or audio
+        url = urllib.parse.unquote("_".join(parts[2:]))
+        
+        await query.message.edit_text("⏳ جاري التحميل والمعالجة...")
+        await process_download_task(query.message, url, mode)
+
 
 # =========================================================
-# ADMIN TEXT HANDLERS
+# ADMIN TEXT STEPS
 # =========================================================
 async def handle_admin_steps(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user_id = update.effective_user.id
@@ -199,48 +201,41 @@ async def handle_admin_steps(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return False
 
     if context.user_data.get("waiting_for_welcome"):
-        new_welcome = update.message.text
-        settings_data["welcome_message"] = new_welcome
+        settings_data["welcome_message"] = update.message.text
         save_json(SETTINGS_FILE, settings_data)
         context.user_data["waiting_for_welcome"] = False
-        await update.message.reply_text("✅ تم تحديث رسالة الترحيب بنجاح!")
+        await update.message.reply_text("✅ تم التحديث!")
         return True
 
     if context.user_data.get("waiting_for_add_channel"):
         parts = update.message.text.strip().split()
         if len(parts) >= 2:
-            ch_id = parts[0]
-            ch_url = parts[1]
-            settings_data["channels"].append({"id": ch_id, "url": ch_url})
+            settings_data["channels"].append({"id": parts[0], "url": parts[1]})
             save_json(SETTINGS_FILE, settings_data)
             context.user_data["waiting_for_add_channel"] = False
-            await update.message.reply_text(f"✅ تم إضافة القناة {ch_id} بنجاح للاشتراك الإجباري!")
+            await update.message.reply_text("✅ تم إضافة القناة!")
         else:
-            await update.message.reply_text("خطأ في التنسيق. أرسل المعرف والرابط مفصولين بمسافة.")
+            await update.message.reply_text("خطأ في التنسيق.")
         return True
 
     if context.user_data.get("waiting_for_broadcast"):
         context.user_data["waiting_for_broadcast"] = False
-        users = users_data["users"]
-        sent_count = 0
-        await update.message.reply_text(f"🚀 جاري بدء الإذاعة إلى {len(users)} مستخدم...")
-        
-        for uid in users:
+        sent = 0
+        for uid in users_data["users"]:
             try:
                 await update.message.copy(chat_id=uid)
-                sent_count += 1
-                await asyncio.sleep(0.05)
-            except Exception:
+                sent += 1
+                await asyncio.sleep(0.04)
+            except:
                 pass
-        
-        await update.message.reply_text(f"✅ تمت الإذاعة بنجاح إلى `{sent_count}` مستخدم.")
+        await update.message.reply_text(f"✅ تمت الإذاعة إلى `{sent}` مستخدم.")
         return True
 
     return False
 
 
 # =========================================================
-# JOB DIRECTORY & DOWNLOAD
+# DOWNLOAD CORE (YT-DLP)
 # =========================================================
 def create_job_directory(user_id: int):
     job_id = str(user_id) + "_" + uuid.uuid4().hex
@@ -248,113 +243,127 @@ def create_job_directory(user_id: int):
     os.makedirs(job_dir, exist_ok=True)
     return job_dir
 
-async def download_video(url: str, job_dir: str):
+async def download_media(url: str, job_dir: str, mode: str = "video"):
     output = os.path.join(job_dir, "%(id)s.%(ext)s")
-    attempt = 0
-
-    while True:
-        attempt += 1
+    
+    if mode == "audio":
         command = [
-            "python",
-            "-m",
-            "yt_dlp",
+            "python", "-m", "yt_dlp",
             "--no-playlist",
-            "-f", "b / best",
+            "-x", "--audio-format", "mp3", "--audio-quality", "0",
             "-o", output,
-            "--socket-timeout", "30",
-            "--retries", "5",
-            "--fragment-retries", "5",
-            "--no-check-certificates",
-            "--geo-bypass",
-            "--quiet",
-            "--no-warnings",
+            "--no-check-certificates", "--geo-bypass", "--no-warnings",
+            url
+        ]
+    else:
+        command = [
+            "python", "-m", "yt_dlp",
+            "--no-playlist",
+            "-f", "bestvideo+bestaudio/best",
+            "--merge-output-format", "mp4",
+            "-o", output,
+            "--no-check-certificates", "--geo-bypass", "--no-warnings",
             url
         ]
 
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        _, stderr = await process.communicate()
+        
+        files = glob.glob(os.path.join(job_dir, "*"))
+        valid_files = [f for f in files if os.path.isfile(f) and os.path.getsize(f) > 0]
 
-            files = glob.glob(os.path.join(job_dir, "*"))
-            valid_files = [
-                file for file in files
-                if os.path.isfile(file) and os.path.getsize(file) > 0
-            ]
+        if process.returncode == 0 and valid_files:
+            valid_files.sort(key=os.path.getsize, reverse=True)
+            return valid_files[0]
+    except Exception as e:
+        print("DOWNLOAD EXCEPTION:", repr(e))
+    return None
 
-            if process.returncode == 0 and valid_files:
-                valid_files.sort(key=os.path.getsize, reverse=True)
-                return valid_files[0]
-
-        except Exception as e:
-            print("YT-DLP EXCEPTION:", repr(e))
-
-        if attempt >= 3:
-            return None
-        await asyncio.sleep(2)
-
-async def send_video(update: Update, filename: str):
-    async with send_semaphore:
-        with open(filename, "rb") as video:
-            await update.message.reply_video(
-                video=video,
-                supports_streaming=True,
-                read_timeout=180,
-                write_timeout=180,
-                connect_timeout=30
-            )
-
-async def process_job(update: Update, status, url: str):
-    job_dir = create_job_directory(update.effective_user.id)
-    filename = None
-
+async def process_download_task(message, url: str, mode: str):
+    job_dir = create_job_directory(message.chat.id)
     try:
         async with download_semaphore:
-            filename = await download_video(url, job_dir)
+            filename = await download_media(url, job_dir, mode)
 
         if not filename or not os.path.exists(filename):
-            raise Exception("لم يتم العثور على الفيديو أو فشل التحميل من هذا الرابط.")
+            await message.edit_text("❌ عذراً، فشل التحميل من هذا الرابط.")
+            return
 
-        try:
-            await status.edit_text("تم التحميل، جاري الإرسال...")
-        except Exception:
-            pass
-
-        await send_video(update, filename)
-        try:
-            await status.delete()
-        except Exception:
-            pass
-
+        await message.edit_text("📤 جاري إرسال الملف...")
+        async with send_semaphore:
+            with open(filename, "rb") as f:
+                if mode == "audio":
+                    await message.reply_audio(audio=f)
+                else:
+                    await message.reply_video(video=f, supports_streaming=True)
+        await message.delete()
     except Exception as e:
         try:
-            await status.edit_text("فشل التحميل:\n" + str(e)[:1500])
-        except Exception:
+            await message.edit_text(f"❌ حدث خطأ: {str(e)[:100]}", parse_mode="Markdown")
+        except:
             pass
     finally:
-        try:
-            if os.path.exists(job_dir):
-                for file in glob.glob(os.path.join(job_dir, "*")):
-                    try:
-                        os.remove(file)
-                    except Exception:
-                        pass
-                try:
-                    os.rmdir(job_dir)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        if os.path.exists(job_dir):
+            for f in glob.glob(os.path.join(job_dir, "*")):
+                try: os.remove(f)
+                except: pass
+            try: os.rmdir(job_dir)
+            except: pass
 
 
 # =========================================================
-# MESSAGE HANDLER
+# MUSIC RECOGNITION (ACRCloud / AudD Free API)
 # =========================================================
-async def download_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+async def recognize_song(file_path: str):
+    """التعرف على الأغنية عبر إرسال عينة صوتية لواجهة برمجية مجانية"""
+    try:
+        with open(file_path, "rb") as f:
+            audio_data = f.read()
+        
+        # استخدام API مجاني للتعرف على الأغاني (AudD Test API)
+        data = {
+            'api_token': 'test',
+            'return': 'apple_music,spotify',
+        }
+        files = {
+            'file': audio_data,
+        }
+        
+        loop = asyncio.get_running_loop()
+        def req():
+            import requests
+            return requests.post('https://api.audd.io/', data=data, files=files, timeout=15)
+        
+        response = await loop.run_in_executor(None, req)
+        result = response.json()
+        
+        if result.get("status") == "success" and result.get("result"):
+            res = result["result"]
+            title = res.get("title", "غير معروف")
+            artist = res.get("artist", "غير معروف")
+            album = res.get("album", "غير معروف")
+            spotify_url = res.get("spotify", {}).get("external_urls", {}).get("spotify", "")
+            
+            text = f"🎵 **تم العثور على الأغنية بنجاح!**\n\n" \
+                   f"📌 **اسم الأغنية:** `{title}`\n" \
+                   f"🎤 **المطرب/الفنان:** `{artist}`\n" \
+                   f"💿 **الألبوم:** `{album}`"
+            if spotify_url:
+                text += f"\n🔗 [استمع على سبوتيفاي]({spotify_url})"
+            return text
+    except Exception as e:
+        print("RECOGNITION ERROR:", repr(e))
+    return None
+
+
+# =========================================================
+# MESSAGE HANDLERS
+# =========================================================
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
         return
 
     if await handle_admin_steps(update, context):
@@ -362,33 +371,63 @@ async def download_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
     
+    # فحص الاشتراك الإجباري
     not_sub = await check_subscription(user_id, context)
     if not_sub:
-        keyboard = []
-        for ch in not_sub:
-            keyboard.append([InlineKeyboardButton("اشترك في القناة 📢", url=ch["url"])])
+        keyboard = [[InlineKeyboardButton("اشترك في القناة 📢", url=ch["url"])] for ch in not_sub]
         keyboard.append([InlineKeyboardButton("تحقق من الاشتراك ✅", callback_data="check_sub")])
+        await update.message.reply_text("عذراً، اشترك في القنوات أولاً.", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    # 1. التعامل مع الروابط (يوتيوب، انستا، تيك توك، بينترست)
+    if update.message.text and update.message.text.strip().startswith(("http://", "https://")):
+        url = update.message.text.strip()
         
-        await update.message.reply_text(
-            "عذراً، يجب عليك الاشتراك في القنوات الإجبارية أولاً لتتمكن من التحميل.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        # إذا كان الرابط يوتيوب، نعرض خيارات (فيديو أو صوت)
+        if "youtube.com" in url or "youtu.be" in url:
+            encoded_url = urllib.parse.quote(url, safe="")
+            keyboard = [
+                [
+                    InlineKeyboardButton("🎬 تحميل فيديو", callback_data=f"dl_video_{encoded_url}"),
+                    InlineKeyboardButton("🎵 تحميل صوت MP3", callback_data=f"dl_audio_{encoded_url}")
+                ]
+            ]
+            await update.message.reply_text("اختر طريقة التحميل المطلوبة ليوتيوب:", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+        
+        # باقي المنصات (تيك توك، انستغرام، بينترست) نحملها فيديو مباشرة
+        status = await update.message.reply_text("⏳ جاري التحميل والمعالجة...")
+        asyncio.create_task(process_download_task(status, url, "video"))
         return
 
-    url = update.message.text.strip()
-    if not url.startswith(("http://", "https://")):
-        await update.message.reply_text("أرسل رابط صحيح (يوتيوب، انستغرام، تيك توك، بينترست).")
+    # 2. التعامل مع الملفات الصوتية أو الفيديوهات المرسلة (ميزة التعرف على الأغاني)
+    audio_file = update.message.audio or update.message.voice or update.message.video or update.message.document
+    if audio_file:
+        status = await update.message.reply_text("🎧 جاري الاستماع للتعرف على الأغنية...")
+        job_dir = create_job_directory(user_id)
+        try:
+            file_obj = await context.bot.get_file(audio_file.file_id)
+            input_path = os.path.join(job_dir, "input_media")
+            await file_obj.download_to_drive(input_path)
+            
+            song_info = await recognize_song(input_path)
+            if song_info:
+                await status.edit_text(song_info, parse_mode="Markdown")
+            else:
+                await status.edit_text("❌ لم يتم التعرف على الأغنية، تأكد من وضوح المقطع الصوتي.")
+        except Exception as e:
+            await status.edit_text("❌ حدث خطأ أثناء تحليل الملف الصوتي.")
+        finally:
+            if os.path.exists(job_dir):
+                for f in glob.glob(os.path.join(job_dir, "*")):
+                    try: os.remove(f)
+                    except: pass
+                try: os.rmdir(job_dir)
+                except: pass
         return
 
-    try:
-        status = await update.message.reply_text("جاري معالجة الرابط وتحميل الفيديو...")
-    except Exception as e:
-        return
-
-    asyncio.create_task(process_job(update, status, url))
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    print("TELEGRAM ERROR:", repr(context.error))
+    if update.message.text:
+        await update.message.reply_text("أرسل رابط صحيح (يوتيوب، انستغرام، تيك توك، بينترست) أو أرسل مقطعاً صوتياً للبحث عن الأغنية.")
 
 
 # =========================================================
@@ -400,11 +439,10 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(admin_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download_handler))
-    app.add_error_handler(error_handler)
+    app.add_handler(MessageHandler(filters.TEXT | filters.AUDIO | filters.VOICE | filters.VIDEO | filters.DOCUMENT, message_handler))
 
     print("==========================================")
-    print("BOT STARTED - ALL PLATFORMS SUPPORTED")
+    print("BOT STARTED WITH YOUTUBE OPTIONS & SHAZAM")
     print("==========================================")
 
     app.run_polling(drop_pending_updates=True, bootstrap_retries=5)
